@@ -12,7 +12,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# تعداد ارسال‌ها در روز بر اساس user_id → [count, date]
+# تعداد ارسال‌ها در روز بر اساس user_id → (count, date)
 user_gif_sticker_count = {}
 
 # محدودیت‌های مجاز برای کاربران (user_id → allowed_count)
@@ -28,47 +28,23 @@ async def restrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_id = None
-    username_or_id = context.args[0]
-    limit_str = context.args[1]
-
+    # سعی برای پیدا کردن کاربر از طریق username یا id
     try:
-        limit = int(limit_str)
-    except:
-        await update.message.reply_text("عدد معتبر وارد کن برای محدودیت.")
+        # اگر ورودی عدد بود
+        if context.args[0].isdigit():
+            user_id = int(context.args[0])
+        else:
+            # تلاش برای گرفتن user_id از username با get_chat_member
+            member = await context.bot.get_chat_member(update.effective_chat.id, context.args[0])
+            user_id = member.user.id
+    except Exception as e:
+        await update.message.reply_text("نتونستم کاربر رو پیدا کنم یا کاربر عضو گروه نیست.")
         return
 
-    # اگر آرگومان اول عدد بود
-    if username_or_id.isdigit():
-        user_id = int(username_or_id)
-    else:
-        username = username_or_id
-        if username.startswith("@"):
-            username = username[1:]
-
-        # تلاش برای گرفتن user_id از entities پیام
-        if update.message.entities:
-            for entity in update.message.entities:
-                if entity.type == "mention":
-                    mentioned_username = update.message.text[entity.offset:entity.offset + entity.length]
-                    if mentioned_username.lstrip('@').lower() == username.lower():
-                        try:
-                            member = await context.bot.get_chat_member(update.effective_chat.id, username)
-                            user_id = member.user.id
-                            break
-                        except:
-                            continue
-
-        # اگر هنوز user_id پیدا نشده از get_chat_member استفاده کن
-        if not user_id:
-            try:
-                member = await context.bot.get_chat_member(update.effective_chat.id, username)
-                user_id = member.user.id
-            except Exception as e:
-                await update.message.reply_text(f"نتونستم کاربر رو پیدا کنم یا کاربر عضو گروه نیست.\n{str(e)}")
-                return
-
-    if not user_id:
-        await update.message.reply_text("کاربر مشخص نیست.")
+    try:
+        limit = int(context.args[1])
+    except:
+        await update.message.reply_text("عدد معتبر وارد کن برای محدودیت.")
         return
 
     user_limits[user_id] = limit
@@ -88,7 +64,7 @@ async def unrestrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
             member = await context.bot.get_chat_member(update.effective_chat.id, context.args[0])
             user_id = member.user.id
     except:
-        await update.message.reply_text("کاربر پیدا نشد.")
+        await update.message.reply_text("کاربر پیدا نشد یا عضو گروه نیست.")
         return
 
     if user_id in user_limits:
@@ -96,6 +72,20 @@ async def unrestrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ محدودیت برای کاربر {user_id} حذف شد.")
     else:
         await update.message.reply_text("کاربر محدود نشده بوده.")
+
+# دستور گرفتن آیدی کاربر
+async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    # اگر ریپلای به پیام کاربر باشه
+    if update.message.reply_to_message:
+        user = update.message.reply_to_message.from_user
+        await update.message.reply_text(f"آیدی کاربر:\n{user.id}")
+    else:
+        # اگر ریپلای نبود، آیدی خود کسی که دستور رو فرستاده بده
+        user = update.effective_user
+        await update.message.reply_text(f"آیدی شما:\n{user.id}")
 
 # بررسی پیام‌ها
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,6 +124,7 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("restrict", restrict))
     app.add_handler(CommandHandler("unrestrict", unrestrict))
+    app.add_handler(CommandHandler("id", get_id))
     app.add_handler(MessageHandler(filters.ALL, handle_message))
 
     print("✅ ربات فعال شد.")
