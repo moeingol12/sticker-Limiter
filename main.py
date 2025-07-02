@@ -27,28 +27,29 @@ async def restrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("مثال:\n/restrict @username 3")
         return
 
-    user = update.message.parse_entities().get("mention")
-    if user:
-        user_id = user.id
-    else:
-        try:
-            user_id = int(context.args[0]) if context.args[0].isdigit() else None
-        except:
-            user_id = None
+    user_id = None
+    username_or_id = context.args[0]
+    limit_str = context.args[1]
 
     try:
-        limit = int(context.args[1])
+        limit = int(limit_str)
     except:
         await update.message.reply_text("عدد معتبر وارد کن برای محدودیت.")
         return
 
-    if not user_id:
-        # تلاش برای گرفتن کاربر از طریق @username
+    # اگر آرگومان اول عدد بود
+    if username_or_id.isdigit():
+        user_id = int(username_or_id)
+    else:
+        # حذف @ اگر هست
+        username = username_or_id
+        if username.startswith("@"):
+            username = username[1:]
         try:
-            member = await context.bot.get_chat_member(update.effective_chat.id, context.args[0])
+            member = await context.bot.get_chat_member(update.effective_chat.id, username)
             user_id = member.user.id
-        except:
-            await update.message.reply_text("نتونستم کاربر رو پیدا کنم.")
+        except Exception:
+            await update.message.reply_text("نتونستم کاربر رو پیدا کنم یا کاربر عضو گروه نیست.")
             return
 
     user_limits[user_id] = limit
@@ -61,15 +62,20 @@ async def unrestrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_id = None
-    try:
-        if context.args[0].isdigit():
-            user_id = int(context.args[0])
-        else:
-            member = await context.bot.get_chat_member(update.effective_chat.id, context.args[0])
+    username_or_id = context.args[0]
+
+    if username_or_id.isdigit():
+        user_id = int(username_or_id)
+    else:
+        username = username_or_id
+        if username.startswith("@"):
+            username = username[1:]
+        try:
+            member = await context.bot.get_chat_member(update.effective_chat.id, username)
             user_id = member.user.id
-    except:
-        await update.message.reply_text("کاربر پیدا نشد.")
-        return
+        except Exception:
+            await update.message.reply_text("کاربر پیدا نشد یا عضو گروه نیست.")
+            return
 
     if user_id in user_limits:
         del user_limits[user_id]
