@@ -12,49 +12,60 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# تعداد ارسال‌ها در روز بر اساس user_id → [count, date]
+# تعداد ارسال‌ها در روز بر اساس user_id → (count, date)
 user_gif_sticker_count = {}
 
 # محدودیت‌های مجاز برای کاربران (user_id → (allowed_count, set_by_user_id))
-# مقدار دوم یعنی کاربری که محدودیت را گذاشته
 user_limits = {}
-
-# گرفتن ادمین‌ها و صاحب گروه
-async def get_admins_and_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    admins = await context.bot.get_chat_administrators(chat.id)
-    owner = None
-    admin_ids = set()
-    for admin in admins:
-        admin_ids.add(admin.user.id)
-        if admin.status == "creator":
-            owner = admin.user.id
-    return owner, admin_ids
 
 # دستور محدود کردن کاربر با تعداد دلخواه
 async def restrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    owner_id, admin_ids = await get_admins_and_owner(update, context)
     from_user_id = update.effective_user.id
-
-    if from_user_id not in admin_ids and from_user_id != owner_id:
-        await update.message.reply_text("❌ فقط ادمین‌ها و صاحب گروه می‌تونن از این دستور استفاده کنن.")
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("این دستور فقط در گروه‌ها قابل استفاده است.")
         return
+
+    # گرفتن اطلاعات ادمین‌ها و صاحب گروه
+    member = await context.bot.get_chat_member(chat.id, from_user_id)
+    if not member.status in ['administrator', 'creator']:
+        await update.message.reply_text("⚠️ فقط ادمین‌ها اجازه استفاده از این دستور را دارند.")
+        return
+
+    owner_id = None
+    admins = await context.bot.get_chat_administrators(chat.id)
+    for admin in admins:
+        if admin.status == 'creator':
+            owner_id = admin.user.id
+            break
 
     if not context.args or len(context.args) < 2:
         await update.message.reply_text("مثال:\n/restrict @username 3")
         return
 
-    user = update.message.parse_entities().get("mention")
-    if user:
-        user_id = user.id
+    # دریافت user_id هدف
+    target_user_id = None
+    if update.message.reply_to_message:
+        target_user_id = update.message.reply_to_message.from_user.id
     else:
+        username_or_id = context.args[0]
         try:
-            user_id = int(context.args[0]) if context.args[0].isdigit() else None
+            if username_or_id.isdigit():
+                target_user_id = int(username_or_id)
+            else:
+                member = await context.bot.get_chat_member(chat.id, username_or_id)
+                target_user_id = member.user.id
         except:
-            user_id = None
+            await update.message.reply_text("نتونستم کاربر رو پیدا کنم یا عضو گروه نیست.")
+            return
+
+    # بررسی اینکه ادمین بتواند فقط کاربرانی غیر صاحب گروه را محدود کند
+    if target_user_id == owner_id and from_user_id != owner_id:
+        await update.message.reply_text("❌ فقط صاحب گروه می‌تواند خودش را محدود کند.")
+        return
 
     try:
         limit = int(context.args[1])
@@ -62,62 +73,61 @@ async def restrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عدد معتبر وارد کن برای محدودیت.")
         return
 
-    if not user_id:
-        # تلاش برای گرفتن کاربر از طریق @username
-        try:
-            member = await context.bot.get_chat_member(update.effective_chat.id, context.args[0])
-            user_id = member.user.id
-        except:
-            await update.message.reply_text("نتونستم کاربر رو پیدا کنم یا عضو گروه نیست.")
-            return
-
-    # اگر محدودیتی روی این کاربر قبلا گذاشته شده و توسط صاحب گروه باشد،
-    # فقط صاحب گروه اجازه دارد تغییر دهد.
-    if user_id in user_limits:
-        _, set_by_user = user_limits[user_id]
-        if set_by_user == owner_id and from_user_id != owner_id:
-            await update.message.reply_text("❌ فقط صاحب گروه می‌تواند محدودیت روی این کاربر را تغییر دهد.")
-            return
-
-    user_limits[user_id] = (limit, from_user_id)
-    await update.message.reply_text(f"✅ محدودیت برای کاربر {user_id} روی {limit} گیف/استیکر در روز تنظیم شد.")
+    user_limits[target_user_id] = (limit, from_user_id)
+    await update.message.reply_text(f"✅ محدودیت برای کاربر {target_user_id} روی {limit} گیف/استیکر در روز تنظیم شد.")
 
 # دستور حذف محدودیت
 async def unrestrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    owner_id, admin_ids = await get_admins_and_owner(update, context)
     from_user_id = update.effective_user.id
-
-    if from_user_id not in admin_ids and from_user_id != owner_id:
-        await update.message.reply_text("❌ فقط ادمین‌ها و صاحب گروه می‌تونن از این دستور استفاده کنن.")
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("این دستور فقط در گروه‌ها قابل استفاده است.")
         return
 
-    if not context.args:
-        await update.message.reply_text("مثال:\n/unrestrict @username")
+    # گرفتن اطلاعات ادمین‌ها و صاحب گروه
+    member = await context.bot.get_chat_member(chat.id, from_user_id)
+    if not member.status in ['administrator', 'creator']:
+        await update.message.reply_text("⚠️ فقط ادمین‌ها اجازه استفاده از این دستور را دارند.")
         return
 
-    user_id = None
-    try:
-        if context.args[0].isdigit():
-            user_id = int(context.args[0])
-        else:
-            member = await context.bot.get_chat_member(update.effective_chat.id, context.args[0])
-            user_id = member.user.id
-    except:
-        await update.message.reply_text("کاربر پیدا نشد یا عضو گروه نیست.")
+    owner_id = None
+    admins = await context.bot.get_chat_administrators(chat.id)
+    for admin in admins:
+        if admin.status == 'creator':
+            owner_id = admin.user.id
+            break
+
+    if not context.args and not update.message.reply_to_message:
+        await update.message.reply_text("مثال:\n/unrestrict @username یا ریپلای پیام کاربر")
         return
 
-    # اگر محدودیت روی این کاربر توسط صاحب گروه گذاشته شده:
-    # فقط صاحب گروه اجازه حذف آن را دارد.
-    if user_id in user_limits:
-        _, set_by_user = user_limits[user_id]
+    # دریافت user_id هدف
+    target_user_id = None
+    if update.message.reply_to_message:
+        target_user_id = update.message.reply_to_message.from_user.id
+    else:
+        username_or_id = context.args[0]
+        try:
+            if username_or_id.isdigit():
+                target_user_id = int(username_or_id)
+            else:
+                member = await context.bot.get_chat_member(chat.id, username_or_id)target_user_id = member.user.id
+        except:
+            await update.message.reply_text("نتونستم کاربر رو پیدا کنم یا عضو گروه نیست.")
+            return
+
+    if target_user_id in user_limits:
+        limit, set_by_user = user_limits[target_user_id]
+        # فقط صاحب گروه می‌تواند محدودیتی را که خودش گذاشته بردارد
         if set_by_user == owner_id and from_user_id != owner_id:
-            await update.message.reply_text("❌ فقط صاحب گروه می‌تواند محدودیت روی این کاربر را بردارد.")return
+            await update.message.reply_text("❌ فقط صاحب گروه می‌تواند محدودیت روی این کاربر را بردارد.")
+            return
 
-        del user_limits[user_id]
-        await update.message.reply_text(f"❌ محدودیت برای کاربر {user_id} حذف شد.")
+        del user_limits[target_user_id]
+        await update.message.reply_text(f"❌ محدودیت برای کاربر {target_user_id} حذف شد.")
     else:
         await update.message.reply_text("کاربر محدود نشده بوده.")
 
@@ -129,6 +139,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     message = update.message
 
+    # بررسی اینکه پیام گیف یا استیکر هست یا نه
     if message.sticker or message.animation:
         today = datetime.now().date()
 
